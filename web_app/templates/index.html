@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Video Discovery & Download</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+            font-size: 2.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        
+        .card h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .input-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+            color: #333;
+        }
+        
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 14px;
+        }
+        
+        input[type="number"] {
+            width: 150px;
+        }
+        
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            transition: transform 0.2s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+        }
+        
+        button.download {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+        }
+        
+        button.upload {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+        }
+        
+        button.small {
+            padding: 6px 12px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        
+        .status {
+            margin-top: 15px;
+            padding: 10px;
+            border-radius: 8px;
+            display: none;
+        }
+        
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+            display: block;
+        }
+        
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+            display: block;
+        }
+        
+        .video-list {
+            max-height: 400px;
+            overflow-y: auto;
+            border: 1px solid #eee;
+            border-radius: 8px;
+        }
+        
+        .video-item {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .video-item:hover {
+            background: #f5f5f5;
+        }
+        
+        .video-item.selected {
+            background: #e8f0fe;
+            border-left: 4px solid #667eea;
+        }
+        
+        .video-info {
+            flex: 1;
+        }
+        
+        .video-title {
+            font-weight: bold;
+            color: #333;
+        }
+        
+        .video-url {
+            font-size: 12px;
+            color: #666;
+            word-break: break-all;
+        }
+        
+        .video-stats {
+            font-size: 11px;
+            color: #999;
+            margin-top: 5px;
+        }
+        
+        .video-checkbox {
+            margin-right: 15px;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e0e0e0;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+            display: none;
+        }
+        
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+        
+        .stat-box {
+            text-align: center;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .stat-number {
+            font-size: 28px;
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 5px;
+        }
+        
+        .flex-buttons {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .flex-buttons button {
+            flex: 0 0 auto;
+        }
+        
+        .download-controls {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .download-controls label {
+            display: inline;
+            margin-bottom: 0;
+        }
+        
+        .selected-count {
+            font-weight: bold;
+            color: #667eea;
+        }
+        
+        .batch-controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .batch-controls button {
+            background: #6c757d;
+            font-size: 12px;
+            padding: 6px 12px;
+        }
+        
+        hr {
+            margin: 15px 0;
+            border: none;
+            border-top: 1px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎬 YouTube Video Discovery & Download</h1>
+        
+        <!-- Discovery Card -->
+        <div class="card">
+            <h2>🔍 Discover Videos</h2>
+            <div class="input-group">
+                <label>Search Terms (comma separated):</label>
+                <input type="text" id="searchTerms" value="python programming, web development, data science, machine learning" placeholder="python, javascript, web development">
+            </div>
+            <div class="input-group">
+                <label>Max Results per term:</label>
+                <input type="number" id="maxResults" value="10" min="1" max="50">
+            </div>
+            <button onclick="runDiscovery()">🚀 Start Discovery</button>
+            <div id="discoveryStatus" class="status"></div>
+            <div id="discoveryProgress" class="progress-bar"><div class="progress-fill"></div></div>
+        </div>
+        
+        <!-- Statistics Card -->
+        <div class="card" id="statsCard" style="display:none;">
+            <h2>📊 Discovery Statistics</h2>
+            <div id="statistics" class="stats-grid"></div>
+        </div>
+        
+        <!-- Discovered Videos Card -->
+        <div class="card" id="videosCard" style="display:none;">
+            <h2>🎥 Discovered Videos</h2>
+            
+            <!-- Selection Controls -->
+            <div class="download-controls">
+                <div class="batch-controls">
+                    <button onclick="selectAll()">✅ Select All</button>
+                    <button onclick="deselectAll()">⬜ Deselect All</button>
+                    <button onclick="selectTopN()">⭐ Select Top...</button>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <span>Selected: <span id="selectedCount" class="selected-count">0</span> videos</span>
+                    <input type="number" id="customDownloadCount" placeholder="Custom number" min="1" style="width: 120px;">
+                    <button onclick="selectCustomNumber()" class="small">Select</button>
+                </div>
+            </div>
+            
+            <!-- Download Buttons -->
+            <div class="flex-buttons">
+                <button onclick="downloadSelected()" class="download">⬇️ Download Selected (<span id="downloadSelectedCount">0</span>)</button>
+                <button onclick="downloadSinglePrompt()" class="download">⬇️ Download 1 Video</button>
+                <button onclick="downloadCustomNumber()" class="download">⬇️ Download Custom Number</button>
+                <button onclick="downloadTopVideos()" class="download">⬇️ Download Top 10</button>
+                <button onclick="downloadAllVideos()" class="download">⬇️ Download All</button>
+            </div>
+            
+            <div id="discoveredVideos" class="video-list" style="margin-top: 15px;"></div>
+        </div>
+        
+        <!-- Download Status Card -->
+        <div class="card" id="downloadCard" style="display:none;">
+            <h2>📥 Download Progress</h2>
+            <div id="downloadStatus" class="status"></div>
+            <div id="downloadProgressBar" class="progress-bar"><div class="progress-fill"></div></div>
+            <div id="currentDownloading" style="margin-top: 10px; font-size: 14px; color: #666;"></div>
+        </div>
+    </div>
+    
+    <script>
+        let discoveredVideos = [];
+        let selectedVideoIndices = new Set();
+        let currentResultsFile = '';
+        
+        async function runDiscovery() {
+            const searchTerms = document.getElementById('searchTerms').value;
+            const maxResults = document.getElementById('maxResults').value;
+            
+            const statusDiv = document.getElementById('discoveryStatus');
+            const progressDiv = document.getElementById('discoveryProgress');
+            
+            statusDiv.className = 'status info';
+            statusDiv.innerHTML = '🔄 Running discovery... This may take a minute.';
+            progressDiv.style.display = 'block';
+            
+            try {
+                const response = await fetch('/api/discover', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        search_terms: searchTerms.split(',').map(t => t.trim()),
+                        max_results: parseInt(maxResults)
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    discoveredVideos = data.videos;
+                    currentResultsFile = data.results_file;
+                    selectedVideoIndices.clear();
+                    
+                    statusDiv.className = 'status success';
+                    statusDiv.innerHTML = `✅ Discovery complete! Found ${data.videos.length} videos.`;
+                    progressDiv.style.display = 'none';
+                    
+                    displayStatistics(data.stats);
+                    displayVideos(data.videos);
+                    
+                    document.getElementById('statsCard').style.display = 'block';
+                    document.getElementById('videosCard').style.display = 'block';
+                } else {
+                    statusDiv.className = 'status error';
+                    statusDiv.innerHTML = `❌ Error: ${data.error}`;
+                    progressDiv.style.display = 'none';
+                }
+            } catch (error) {
+                statusDiv.className = 'status error';
+                statusDiv.innerHTML = `❌ Connection error: ${error.message}`;
+                progressDiv.style.display = 'none';
+            }
+        }
+        
+        function displayStatistics(stats) {
+            const container = document.getElementById('statistics');
+            container.innerHTML = `
+                <div class="stat-box">
+                    <div class="stat-number">${stats.total_videos}</div>
+                    <div class="stat-label">Total Videos</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${stats.unique_channels}</div>
+                    <div class="stat-label">Unique Channels</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${(stats.total_views / 1000000).toFixed(1)}M</div>
+                    <div class="stat-label">Total Views</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-number">${stats.average_duration.toFixed(0)} min</div>
+                    <div class="stat-label">Avg Duration</div>
+                </div>
+            `;
+        }
+        
+        function displayVideos(videos) {
+            const container = document.getElementById('discoveredVideos');
+            let html = '';
+            
+            videos.forEach((video, index) => {
+                const isSelected = selectedVideoIndices.has(index);
+                html += `
+                    <div class="video-item ${isSelected ? 'selected' : ''}" onclick="toggleSelect(${index}, event)">
+                        <input type="checkbox" class="video-checkbox" ${isSelected ? 'checked' : ''} onclick="event.stopPropagation(); toggleSelect(${index}, event)">
+                        <div class="video-info">
+                            <div class="video-title">${video.title.substring(0, 80)}${video.title.length > 80 ? '...' : ''}</div>
+                            <div class="video-url">${video.url}</div>
+                            <div class="video-stats">
+                                👁️ ${video.view_count.toLocaleString()} views | 
+                                👍 ${video.like_count.toLocaleString()} likes | 
+                                📅 ${video.published_at ? video.published_at.substring(0, 10) : 'N/A'}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            container.innerHTML = html;
+            updateSelectedCount();
+        }
+        
+        function toggleSelect(index, event) {
+            if (selectedVideoIndices.has(index)) {
+                selectedVideoIndices.delete(index);
+            } else {
+                selectedVideoIndices.add(index);
+            }
+            
+            // Update UI
+            const items = document.querySelectorAll('.video-item');
+            if (items[index]) {
+                if (selectedVideoIndices.has(index)) {
+                    items[index].classList.add('selected');
+                    items[index].querySelector('.video-checkbox').checked = true;
+                } else {
+                    items[index].classList.remove('selected');
+                    items[index].querySelector('.video-checkbox').checked = false;
+                }
+            }
+            
+            updateSelectedCount();
+        }
+        
+        function selectAll() {
+            for (let i = 0; i < discoveredVideos.length; i++) {
+                selectedVideoIndices.add(i);
+            }
+            displayVideos(discoveredVideos);
+        }
+        
+        function deselectAll() {
+            selectedVideoIndices.clear();
+            displayVideos(discoveredVideos);
+        }
+        
+        function selectTopN() {
+            let n = prompt('How many top videos (by views) do you want to select?', '5');
+            n = parseInt(n);
+            if (!isNaN(n) && n > 0) {
+                // Sort by views and select top N
+                const sortedIndices = [...Array(discoveredVideos.length).keys()]
+                    .sort((a, b) => discoveredVideos[b].view_count - discoveredVideos[a].view_count);
+                
+                selectedVideoIndices.clear();
+                for (let i = 0; i < Math.min(n, sortedIndices.length); i++) {
+                    selectedVideoIndices.add(sortedIndices[i]);
+                }
+                displayVideos(discoveredVideos);
+            }
+        }
+        
+        function selectCustomNumber() {
+            const customNum = document.getElementById('customDownloadCount').value;
+            let n = parseInt(customNum);
+            if (!isNaN(n) && n > 0) {
+                // Sort by views and select top N
+                const sortedIndices = [...Array(discoveredVideos.length).keys()]
+                    .sort((a, b) => discoveredVideos[b].view_count - discoveredVideos[a].view_count);
+                
+                selectedVideoIndices.clear();
+                for (let i = 0; i < Math.min(n, sortedIndices.length); i++) {
+                    selectedVideoIndices.add(sortedIndices[i]);
+                }
+                displayVideos(discoveredVideos);
+                document.getElementById('customDownloadCount').value = '';
+            } else {
+                alert('Please enter a valid number');
+            }
+        }
+        
+        function updateSelectedCount() {
+            const count = selectedVideoIndices.size;
+            document.getElementById('selectedCount').innerText = count;
+            document.getElementById('downloadSelectedCount').innerText = count;
+        }
+        
+        async function downloadSelected() {
+            if (selectedVideoIndices.size === 0) {
+                alert('No videos selected. Please select videos to download.');
+                return;
+            }
+            
+            const selectedVideos = Array.from(selectedVideoIndices)
+                .sort((a, b) => a - b)
+                .map(i => discoveredVideos[i]);
+            
+            await downloadVideos(selectedVideos);
+        }
+        
+        async function downloadSinglePrompt() {
+            if (discoveredVideos.length === 0) {
+                alert('No videos to download. Run discovery first!');
+                return;
+            }
+            
+            // Ask which video (by position or auto-select top 1)
+            const useTop = confirm('Download the #1 top video (by views)?\nClick OK for top video, Cancel to enter position number.');
+            
+            if (useTop) {
+                // Sort by views and take top 1
+                const topVideo = [...discoveredVideos].sort((a, b) => b.view_count - a.view_count)[0];
+                await downloadVideos([topVideo]);
+            } else {
+                const position = prompt(`Enter video position (1-${discoveredVideos.length}) to download:`, '1');
+                const pos = parseInt(position) - 1;
+                if (!isNaN(pos) && pos >= 0 && pos < discoveredVideos.length) {
+                    await downloadVideos([discoveredVideos[pos]]);
+                } else {
+                    alert('Invalid position!');
+                }
+            }
+        }
+        
+        async function downloadCustomNumber() {
+            if (discoveredVideos.length === 0) {
+                alert('No videos to download. Run discovery first!');
+                return;
+            }
+            
+            let num = prompt(`How many videos do you want to download? (1-${discoveredVideos.length})`, '5');
+            num = parseInt(num);
+            
+            if (!isNaN(num) && num > 0 && num <= discoveredVideos.length) {
+                // Sort by views and take top N
+                const topVideos = [...discoveredVideos]
+                    .sort((a, b) => b.view_count - a.view_count)
+                    .slice(0, num);
+                await downloadVideos(topVideos);
+            } else {
+                alert(`Please enter a number between 1 and ${discoveredVideos.length}`);
+            }
+        }
+        
+        async function downloadTopVideos() {
+            if (discoveredVideos.length === 0) {
+                alert('No videos to download. Run discovery first!');
+                return;
+            }
+            const topVideos = [...discoveredVideos].sort((a, b) => b.view_count - a.view_count).slice(0, 10);
+            await downloadVideos(topVideos);
+        }
+        
+        async function downloadAllVideos() {
+            if (discoveredVideos.length === 0) {
+                alert('No videos to download. Run discovery first!');
+                return;
+            }
+            await downloadVideos(discoveredVideos);
+        }
+        
+        async function downloadVideos(videos) {
+            const downloadCard = document.getElementById('downloadCard');
+            const statusDiv = document.getElementById('downloadStatus');
+            const progressBar = document.getElementById('downloadProgressBar');
+            const currentDiv = document.getElementById('currentDownloading');
+            
+            downloadCard.style.display = 'block';
+            statusDiv.className = 'status info';
+            statusDiv.innerHTML = `📥 Preparing to download ${videos.length} videos...`;
+            progressBar.style.display = 'block';
+            currentDiv.style.display = 'block';
+            
+            let completed = 0;
+            let failed = 0;
+            
+            for (let i = 0; i < videos.length; i++) {
+                const video = videos[i];
+                currentDiv.innerHTML = `🎬 Currently downloading (${i+1}/${videos.length}): ${video.title.substring(0, 60)}...`;
+                statusDiv.innerHTML = `📥 Downloading ${i+1}/${videos.length}: ${video.title.substring(0, 50)}...`;
+                
+                const progress = ((i + 1) / videos.length) * 100;
+                document.querySelector('#downloadProgressBar .progress-fill').style.width = `${progress}%`;
+                
+                try {
+                    const response = await fetch('/api/download', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            url: video.url,
+                            title: video.title
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    if (data.success) {
+                        completed++;
+                        currentDiv.innerHTML = `✅ Completed ${i+1}/${videos.length}: ${video.title.substring(0, 50)}...`;
+                    } else {
+                        failed++;
+                        currentDiv.innerHTML = `❌ Failed ${i+1}/${videos.length}: ${video.title.substring(0, 50)}... - ${data.error}`;
+                    }
+                } catch (error) {
+                    failed++;
+                    currentDiv.innerHTML = `❌ Error downloading: ${video.title.substring(0, 50)}...`;
+                }
+            }
+            
+            statusDiv.className = completed === videos.length ? 'status success' : 'status warning';
+            statusDiv.innerHTML = `✅ Download complete! ${completed} downloaded, ${failed} failed.`;
+            currentDiv.innerHTML = `📁 Files saved to: <strong>/tmp/downloads/</strong> on Render`;
+        }
+    </script>
+</body>
+</html>
