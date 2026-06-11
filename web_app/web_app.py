@@ -91,33 +91,67 @@ def discover():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+
+
+
+
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download a video"""
+    """Download a video using yt-dlp"""
     try:
         data = request.get_json()
         video_url = data.get('url')
+        video_title = data.get('title', 'video')
         output_folder = data.get('output_folder', '/tmp/downloads')
         
+        # Create output folder
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         
+        # Check if yt-dlp is installed
+        check_ytdlp = subprocess.run(['which', 'yt-dlp'], capture_output=True)
+        if check_ytdlp.returncode != 0:
+            # Install yt-dlp
+            subprocess.run(['pip', 'install', 'yt-dlp'], capture_output=True)
+        
+        # Download command
         cmd = [
             'yt-dlp',
-            '-f', 'best',
+            '-f', 'best[ext=mp4]/best',
             '-o', f'{output_folder}/%(title)s.%(ext)s',
             '--no-playlist',
+            '--quiet',
             video_url
         ]
         
+        print(f"Downloading: {video_url}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         if result.returncode == 0:
-            return jsonify({'success': True, 'output': result.stdout})
+            # Find the downloaded file
+            downloaded_files = list(Path(output_folder).glob('*.mp4'))
+            if downloaded_files:
+                latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
+                return jsonify({
+                    'success': True, 
+                    'message': f'Downloaded to {latest_file.name}',
+                    'file': str(latest_file)
+                })
+            else:
+                return jsonify({'success': True, 'message': 'Download completed'})
         else:
             return jsonify({'success': False, 'error': result.stderr})
             
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Download timed out'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+
+
+
+
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
