@@ -601,57 +601,92 @@
             await downloadVideos(discoveredVideos);
         }
         
-        async function downloadVideos(videos) {
-            const downloadCard = document.getElementById('downloadCard');
-            const statusDiv = document.getElementById('downloadStatus');
-            const progressBar = document.getElementById('downloadProgressBar');
-            const currentDiv = document.getElementById('currentDownloading');
+
+
+
+
+
+
+
+
+
+
+async function downloadVideos(videos) {
+    
+    const downloadCard = document.getElementById('downloadCard');
+    const statusDiv = document.getElementById('downloadStatus');
+    const progressBar = document.getElementById('downloadProgressBar');
+    const currentDiv = document.getElementById('currentDownloading');
+    const progressFill = document.querySelector('#downloadProgressBar .progress-fill');
+    
+    downloadCard.style.display = 'block';
+    statusDiv.className = 'status info';
+    statusDiv.innerHTML = `📥 Preparing to download ${videos.length} videos...`;
+    progressBar.style.display = 'block';
+    currentDiv.style.display = 'block';
+    progressFill.style.width = '0%';
+    
+    let completed = 0;
+    let failed = 0;
+    let totalSize = 0;
+    let failedVideos = [];
+    
+    for (let i = 0; i < videos.length; i++) {
+        
+        const video = videos[i];
+        const videoNumber = i + 1;
+        
+        currentDiv.innerHTML = `🎬 Downloading (${videoNumber}/${videos.length}): ${video.title.substring(0, 60)}...`;
+        statusDiv.innerHTML = `📥 Downloading ${videoNumber}/${videos.length}: ${video.title.substring(0, 50)}...`;
+        
+        const progress = (videoNumber / videos.length) * 100;
+        progressFill.style.width = `${progress}%`;
+        
+        try {
             
-            downloadCard.style.display = 'block';
-            statusDiv.className = 'status info';
-            statusDiv.innerHTML = `📥 Preparing to download ${videos.length} videos...`;
-            progressBar.style.display = 'block';
-            currentDiv.style.display = 'block';
+            const response = await fetch('/api/download', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    url: video.url,
+                    title: video.title
+                })
+            });
             
-            let completed = 0;
-            let failed = 0;
+            const data = await response.json();
             
-            for (let i = 0; i < videos.length; i++) {
-                const video = videos[i];
-                currentDiv.innerHTML = `🎬 Currently downloading (${i+1}/${videos.length}): ${video.title.substring(0, 60)}...`;
-                statusDiv.innerHTML = `📥 Downloading ${i+1}/${videos.length}: ${video.title.substring(0, 50)}...`;
-                
-                const progress = ((i + 1) / videos.length) * 100;
-                document.querySelector('#downloadProgressBar .progress-fill').style.width = `${progress}%`;
-                
-                try {
-                    const response = await fetch('/api/download', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            url: video.url,
-                            title: video.title
-                        })
-                    });
-                    
-                    const data = await response.json();
-                    if (data.success) {
-                        completed++;
-                        currentDiv.innerHTML = `✅ Completed ${i+1}/${videos.length}: ${video.title.substring(0, 50)}...`;
-                    } else {
-                        failed++;
-                        currentDiv.innerHTML = `❌ Failed ${i+1}/${videos.length}: ${video.title.substring(0, 50)}... - ${data.error}`;
-                    }
-                } catch (error) {
-                    failed++;
-                    currentDiv.innerHTML = `❌ Error downloading: ${video.title.substring(0, 50)}...`;
-                }
+            if (data.success) {
+                completed++;
+                totalSize += data.size_mb || 0;
+                currentDiv.innerHTML = `✅ Completed (${videoNumber}/${videos.length}): ${video.title.substring(0, 50)}... ${data.size_mb ? `(${data.size_mb} MB)` : ''}`;
+            } else {
+                failed++;
+                failedVideos.push(video.title);
+                currentDiv.innerHTML = `❌ Failed (${videoNumber}/${videos.length}): ${video.title.substring(0, 50)}... - ${data.error}`;
             }
             
-            statusDiv.className = completed === videos.length ? 'status success' : 'status warning';
-            statusDiv.innerHTML = `✅ Download complete! ${completed} downloaded, ${failed} failed.`;
-            currentDiv.innerHTML = `📁 Files saved to: <strong>/tmp/downloads/</strong> on Render`;
+        } catch (error) {
+            failed++;
+            failedVideos.push(video.title);
+            currentDiv.innerHTML = `❌ Error (${videoNumber}/${videos.length}): ${video.title.substring(0, 50)}... - ${error.message}`;
         }
+    }
+    
+    statusDiv.className = completed === videos.length ? 'status success' : 'status warning';
+    statusDiv.innerHTML = `✅ Download complete! ${completed} downloaded, ${failed} failed. Total size: ${totalSize.toFixed(2)} MB`;
+    
+    if (failedVideos.length > 0) {
+        currentDiv.innerHTML = `❌ Failed videos: ${failedVideos.join(', ')}<br>📁 Successful downloads saved to: <strong>/tmp/downloads/</strong> on Render`;
+    } else {
+        currentDiv.innerHTML = `📁 All ${completed} videos saved to: <strong>/tmp/downloads/</strong> on Render`;
+    }
+}
+
+
+
+
+
+        
     </script>
 </body>
 </html>
