@@ -1,4 +1,4 @@
-# web_app/web_app.py - Updated discover endpoint
+# web_app/web_app.py
 import os
 import json
 import subprocess
@@ -18,11 +18,14 @@ DOWNLOAD_SCRIPT = BASE_DIR / 'ytdownload' / 'working_downloader_fixed.py'
 UPLOAD_SCRIPT = BASE_DIR / 'ytupload' / 'yt_uploader_auto.py'
 UPLOADED_LOG = BASE_DIR / 'ytupload' / 'uploaded_videos.log'
 
+# Create download directory
+DOWNLOAD_DIR = Path('/opt/render/project/src/downloads')
+DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# web_app/web_app.py - Updated discover endpoint with better config
 @app.route('/api/discover', methods=['POST'])
 def discover():
     """Run YouTube discovery with given search terms"""
@@ -45,11 +48,6 @@ def discover():
             f.write(f"MAX_RESULTS_PER_TERM={max_results}\n")
             f.write(f"OUTPUT_DIR=youtube_discovery_results\n")
         
-        # Also create a config.py override if needed
-        config_file = DISCOVERY_DIR / 'config.py'
-        with open(config_file, 'r') as f:
-            config_content = f.read()
-        
         print(f"Running discovery with terms: {search_terms}")
         print(f"API Key present: {bool(api_key)}")
         
@@ -63,8 +61,7 @@ def discover():
             env={**os.environ, 'YOUTUBE_API_KEY': api_key}
         )
         
-        print(f"Discovery stdout: {result.stdout}")
-        print(f"Discovery stderr: {result.stderr}")
+        print(f"Discovery stdout: {result.stdout[:500]}")
         
         # Look for the results file
         results_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'json'
@@ -83,7 +80,7 @@ def discover():
         else:
             return jsonify({
                 'success': False, 
-                'error': f'No results found. Script output: {result.stdout[:500]}'
+                'error': f'No results found. Script output: {result.stdout[:300]}'
             })
             
     except subprocess.TimeoutExpired:
@@ -91,67 +88,90 @@ def discover():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-
-
-
-
-
 @app.route('/api/download', methods=['POST'])
 def download():
     """Download a video using yt-dlp"""
     try:
         data = request.get_json()
         video_url = data.get('url')
-        video_title = data.get('title', 'video')
-        output_folder = data.get('output_folder', '/tmp/downloads')
         
-        # Create output folder
-        Path(output_folder).mkdir(parents=True, exist_ok=True)
+        if not video_url:
+            return jsonify({'success': False, 'error': 'No URL provided'})
         
-        # Check if yt-dlp is installed
-        check_ytdlp = subprocess.run(['which', 'yt-dlp'], capture_output=True)
-        if check_ytdlp.returncode != 0:
-            # Install yt-dlp
+        print(f"📥 Downloading: {video_url}")
+        print(f"📁 Output folder: {DOWNLOAD_DIR}")
+        
+        # Ensure yt-dlp is installed
+        check = subprocess.run(['pip', 'show', 'yt-dlp'], capture_output=True)
+        if check.returncode != 0:
+            print("Installing yt-dlp...")
             subprocess.run(['pip', 'install', 'yt-dlp'], capture_output=True)
         
-        # Download command
+        # Download command with verbose output
         cmd = [
             'yt-dlp',
             '-f', 'best[ext=mp4]/best',
-            '-o', f'{output_folder}/%(title)s.%(ext)s',
+            '-o', f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
             '--no-playlist',
-            '--quiet',
             video_url
         ]
         
-        print(f"Downloading: {video_url}")
+        print(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
-        if result.returncode == 0:
-            # Find the downloaded file
-            downloaded_files = list(Path(output_folder).glob('*.mp4'))
-            if downloaded_files:
-                latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
-                return jsonify({
-                    'success': True, 
-                    'message': f'Downloaded to {latest_file.name}',
-                    'file': str(latest_file)
-                })
-            else:
-                return jsonify({'success': True, 'message': 'Download completed'})
+        print(f"Return code: {result.returncode}")
+        if result.stdout:
+            print(f"STDOUT: {result.stdout[:500]}")
+        if result.stderr:
+            print(f"STDERR: {result.stderr[:500]}")
+        
+        # Check for downloaded files
+        downloaded_files = list(DOWNLOAD_DIR.glob('*.mp4'))
+        print(f"Files in download folder: {[f.name for f in downloaded_files]}")
+        
+        if result.returncode == 0 and downloaded_files:
+            latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
+            file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
+            return jsonify({
+                'success': True,
+                'message': f'✅ Downloaded: {latest_file.name} ({file_size} MB)',
+                'file': str(latest_file),
+                'filename': latest_file.name,
+                'size_mb': file_size
+            })
+        elif result.returncode == 0:
+            return jsonify({
+                'success': False,
+                'error': 'Download completed but no MP4 file found',
+                'stdout': result.stdout[:300],
+                'stderr': result.stderr[:300]
+            })
         else:
-            return jsonify({'success': False, 'error': result.stderr})
+            return jsonify({
+                'success': False,
+                'error': result.stderr[:500] if result.stderr else 'Unknown error'
+            })
             
     except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Download timed out'})
+        return jsonify({'success': False, 'error': 'Download timed out after 5 minutes'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-
-
-
-
-
+@app.route('/api/list-downloads', methods=['GET'])
+def list_downloads():
+    """List all downloaded videos"""
+    try:
+        files = []
+        for f in DOWNLOAD_DIR.glob('*.mp4'):
+            files.append({
+                'name': f.name,
+                'size_mb': round(f.stat().st_size / (1024 * 1024), 2),
+                'path': str(f),
+                'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+            })
+        return jsonify({'success': True, 'files': files})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)})
 
 @app.route('/api/upload', methods=['POST'])
 def upload():
@@ -198,36 +218,12 @@ def history():
     
     return jsonify({'success': True, 'history': history})
 
-@app.route('/api/list-files', methods=['POST'])
-def list_files():
-    """List files in a directory"""
-    try:
-        data = request.get_json()
-        folder = data.get('folder', '/tmp/downloads')
-        
-        path = Path(folder)
-        files = []
-        
-        if path.exists():
-            for f in path.glob('*.mp4'):
-                files.append({
-                    'name': f.name,
-                    'size': f.stat().st_size,
-                    'size_mb': round(f.stat().st_size / (1024 * 1024), 2),
-                    'path': str(f)
-                })
-        
-        return jsonify({'success': True, 'files': files})
-        
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
 @app.route('/api/upload-folder', methods=['POST'])
 def upload_folder():
     """Upload all videos from a folder"""
     try:
         data = request.get_json()
-        folder = data.get('folder', '/tmp/downloads')
+        folder = data.get('folder', str(DOWNLOAD_DIR))
         privacy = data.get('privacy_status', 'public')
         
         path = Path(folder)
@@ -251,4 +247,6 @@ def upload_folder():
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    print(f"🚀 Starting server on port {port}")
+    print(f"📁 Download directory: {DOWNLOAD_DIR}")
     app.run(host='0.0.0.0', port=port, debug=False)
