@@ -3,8 +3,6 @@ import os
 import json
 import subprocess
 import sys
-import re
-import time
 import shutil
 from pathlib import Path
 from datetime import datetime
@@ -24,28 +22,30 @@ DISCOVERY_DIR = BASE_DIR / 'youtube_discovery'
 UPLOAD_SCRIPT = BASE_DIR / 'ytupload' / 'yt_uploader_auto.py'
 UPLOADED_LOG = BASE_DIR / 'ytupload' / 'uploaded_videos.log'
 
-# For local development vs Render
+# Download directory - works for both local and Render
 if os.environ.get('RENDER'):
+    # Use persistent disk on Render
     DOWNLOAD_DIR = Path('/opt/render/project/src/downloads')
 else:
+    # Use local folder
     DOWNLOAD_DIR = BASE_DIR / 'downloads'
 
+# Create download directory
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 def check_ytdlp():
     """Check if yt-dlp is installed"""
     try:
-        subprocess.run(['yt-dlp', '--version'], capture_output=True, check=True)
-        print("✅ yt-dlp is installed")
-        return True
+        result = subprocess.run(['yt-dlp', '--version'], capture_output=True, text=True)
+        if result.returncode == 0:
+            print(f"✅ yt-dlp is installed: {result.stdout.strip()}")
+            return True
     except:
-        print("📦 Installing yt-dlp...")
-        subprocess.run([sys.executable, '-m', 'pip', 'install', 'yt-dlp'])
-        return True
-
-def get_download_folder():
-    """Get the download folder path"""
-    return DOWNLOAD_DIR
+        pass
+    
+    print("📦 Installing yt-dlp...")
+    subprocess.run([sys.executable, '-m', 'pip', 'install', 'yt-dlp'], capture_output=True)
+    return True
 
 def check_disk_space(folder):
     """Check available disk space in folder"""
@@ -55,18 +55,6 @@ def check_disk_space(folder):
         return f"{free_gb:.2f} GB free"
     except:
         return "Unknown"
-
-def list_downloaded_files():
-    """List all downloaded video files"""
-    files = []
-    for f in DOWNLOAD_DIR.glob('*.mp4'):
-        files.append({
-            'name': f.name,
-            'size_mb': round(f.stat().st_size / (1024 * 1024), 2),
-            'path': str(f),
-            'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
-        })
-    return files
 
 @app.route('/')
 def index():
@@ -95,8 +83,9 @@ def discover():
         
         print(f"Running discovery with terms: {search_terms}")
         
+        # Run discovery script
         result = subprocess.run(
-            ['python', str(DISCOVERY_DIR / 'main.py')],
+            [sys.executable, str(DISCOVERY_DIR / 'main.py')],
             cwd=str(DISCOVERY_DIR),
             capture_output=True,
             text=True,
@@ -106,28 +95,23 @@ def discover():
         
         print(f"Discovery return code: {result.returncode}")
         
+        # Look for results file
         results_file = DISCOVERY_DIR / 'youtube_discovery_results' / 'json' / 'analysis_report.json'
         
         if results_file.exists():
             with open(results_file, 'r', encoding='utf-8') as f:
                 report = json.load(f)
             
-            # Also get the URLs file
-            urls_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'urls'
-            url_files = list(urls_dir.glob('top_*_urls_*.txt'))
-            urls_file = str(url_files[-1]) if url_files else ''
-            
             return jsonify({
                 'success': True,
                 'videos': report.get('top_videos', []),
                 'stats': report.get('statistics', {}),
-                'urls_file': urls_file,
                 'message': f"Found {len(report.get('top_videos', []))} videos"
             })
         else:
             return jsonify({
-                'success': False, 
-                'error': f'No results found. Script output: {result.stdout[:300]}'
+                'success': False,
+                'error': 'No results found. Please check your API key and try again.'
             })
             
     except subprocess.TimeoutExpired:
@@ -135,44 +119,29 @@ def discover():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
-
-
-
-
-
-
-
 @app.route('/api/download', methods=['POST'])
 def download():
     """Download a video using yt-dlp"""
     try:
         data = request.get_json()
         video_url = data.get('url')
-        video_title = data.get('title', 'video')
         
         if not video_url:
             return jsonify({'success': False, 'error': 'No URL provided'})
         
-        # Use Render's persistent disk or local downloads folder
-        if os.environ.get('RENDER'):
-            output_folder = '/opt/render/project/src/downloads'
-        else:
-            output_folder = str(Path(__file__).parent.parent / 'downloads')
-        
-        # Create output folder
-        Path(output_folder).mkdir(parents=True, exist_ok=True)
-        
         print(f"📥 Downloading: {video_url}")
-        print(f"📁 Output folder: {output_folder}")
+        print(f"📁 Output folder: {DOWNLOAD_DIR}")
+        print(f"💾 Disk space: {check_disk_space(DOWNLOAD_DIR)}")
+        print(f"📁 Folder writable: {os.access(DOWNLOAD_DIR, os.W_OK)}")
         
         # Ensure yt-dlp is installed
         check_ytdlp()
         
-        # Try best format first (most reliable)
+        # Download command
         cmd = [
             'yt-dlp',
-            '-f', 'best',
-            '-o', f'{output_folder}/%(title)s.%(ext)s',
+            '-f', 'best[ext=mp4]/best',
+            '-o', f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
             '--no-playlist',
             '--restrict-filenames',
             video_url
@@ -181,8 +150,13 @@ def download():
         print(f"Running: {' '.join(cmd)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
+        print(f"Return code: {result.returncode}")
+        if result.stderr:
+            print(f"STDERR: {result.stderr[:300]}")
+        
         # Check for downloaded files
-        downloaded_files = list(Path(output_folder).glob('*.mp4'))
+        downloaded_files = list(DOWNLOAD_DIR.glob('*.mp4'))
+        print(f"Files in folder: {[f.name for f in downloaded_files]}")
         
         if result.returncode == 0 and downloaded_files:
             # Find the most recently downloaded file
@@ -194,122 +168,19 @@ def download():
             return jsonify({
                 'success': True,
                 'message': f'✅ Downloaded: {latest_file.name} ({file_size} MB)',
-                'file': str(latest_file),
                 'filename': latest_file.name,
                 'size_mb': file_size
             })
         else:
-            # Try with different format if best fails
-            print("Best format failed, trying mp4 format...")
-            cmd2 = [
-                'yt-dlp',
-                '-f', 'mp4',
-                '-o', f'{output_folder}/%(title)s.%(ext)s',
-                '--no-playlist',
-                '--restrict-filenames',
-                video_url
-            ]
-            
-            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
-            downloaded_files2 = list(Path(output_folder).glob('*.mp4'))
-            
-            if result2.returncode == 0 and downloaded_files2:
-                latest_file = max(downloaded_files2, key=lambda f: f.stat().st_mtime)
-                file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
-                
-                return jsonify({
-                    'success': True,
-                    'message': f'✅ Downloaded: {latest_file.name} ({file_size} MB)',
-                    'file': str(latest_file),
-                    'filename': latest_file.name,
-                    'size_mb': file_size
-                })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': result.stderr[:500] if result.stderr else 'Download failed'
-                })
+            error_msg = result.stderr[:500] if result.stderr else 'Download failed - no file created'
+            print(f"❌ Download failed: {error_msg}")
+            return jsonify({
+                'success': False,
+                'error': error_msg
+            })
             
     except subprocess.TimeoutExpired:
         return jsonify({'success': False, 'error': 'Download timed out after 5 minutes'})
-    except Exception as e:
-        return jsonify({'success': False, 'error': str(e)})
-
-@app.route('/api/download-all', methods=['POST'])
-def download_all():
-    """Download all videos from discovery results"""
-    try:
-        data = request.get_json()
-        discovery_file = data.get('discovery_file')
-        max_downloads = data.get('max_downloads')
-        
-        if not discovery_file:
-            # Try to find the latest discovery file
-            urls_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'urls'
-            url_files = list(urls_dir.glob('top_*_urls_*.txt'))
-            if url_files:
-                discovery_file = str(max(url_files))
-            else:
-                return jsonify({'success': False, 'error': 'No discovery file found'})
-        
-        print(f"📖 Reading discovery file: {discovery_file}")
-        
-        # Extract URLs from file
-        urls = []
-        with open(discovery_file, 'r', encoding='utf-8') as f:
-            for line in f:
-                if '|' in line and 'youtube.com' in line:
-                    parts = line.strip().split('|')
-                    if len(parts) >= 2:
-                        urls.append({
-                            'title': parts[0],
-                            'url': parts[1]
-                        })
-        
-        if not urls:
-            return jsonify({'success': False, 'error': 'No URLs found in discovery file'})
-        
-        # Limit downloads if specified
-        if max_downloads and max_downloads < len(urls):
-            urls = urls[:max_downloads]
-        
-        print(f"🚀 Starting download of {len(urls)} videos")
-        
-        # Ensure yt-dlp is installed
-        check_ytdlp()
-        
-        downloaded = []
-        failed = []
-        
-        for i, video in enumerate(urls, 1):
-            print(f"\n[{i}/{len(urls)}] {video['title'][:60]}...")
-            
-            cmd = [
-                'yt-dlp',
-                '-f', 'best',
-                '-o', f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
-                '--no-playlist',
-                video['url']
-            ]
-            
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                downloaded.append(video['title'])
-                print(f"   ✅ Downloaded")
-            else:
-                failed.append(video['title'])
-                print(f"   ❌ Failed: {result.stderr[:100]}")
-        
-        return jsonify({
-            'success': True,
-            'downloaded_count': len(downloaded),
-            'failed_count': len(failed),
-            'downloaded': downloaded,
-            'failed': failed,
-            'download_folder': str(DOWNLOAD_DIR)
-        })
-        
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -317,7 +188,15 @@ def download_all():
 def list_downloads():
     """List all downloaded videos"""
     try:
-        files = list_downloaded_files()
+        files = []
+        for f in DOWNLOAD_DIR.glob('*.mp4'):
+            files.append({
+                'name': f.name,
+                'size_mb': round(f.stat().st_size / (1024 * 1024), 2),
+                'path': str(f),
+                'modified': datetime.fromtimestamp(f.stat().st_mtime).isoformat()
+            })
+        
         return jsonify({
             'success': True,
             'files': files,
@@ -340,7 +219,7 @@ def upload():
             return jsonify({'success': False, 'error': 'Video file not found'})
         
         cmd = [
-            'python', str(UPLOAD_SCRIPT),
+            sys.executable, str(UPLOAD_SCRIPT),
             '--video', video_path,
             '--title', title,
             '--privacy', privacy
