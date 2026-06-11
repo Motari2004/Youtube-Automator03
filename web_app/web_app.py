@@ -135,6 +135,13 @@ def discover():
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
+
+
+
+
+
+
+
 @app.route('/api/download', methods=['POST'])
 def download():
     """Download a video using yt-dlp"""
@@ -146,39 +153,36 @@ def download():
         if not video_url:
             return jsonify({'success': False, 'error': 'No URL provided'})
         
+        # Use Render's persistent disk or local downloads folder
+        if os.environ.get('RENDER'):
+            output_folder = '/opt/render/project/src/downloads'
+        else:
+            output_folder = str(Path(__file__).parent.parent / 'downloads')
+        
+        # Create output folder
+        Path(output_folder).mkdir(parents=True, exist_ok=True)
+        
         print(f"📥 Downloading: {video_url}")
-        print(f"📁 Output folder: {DOWNLOAD_DIR}")
-        print(f"💾 Available space: {check_disk_space(DOWNLOAD_DIR)}")
+        print(f"📁 Output folder: {output_folder}")
         
         # Ensure yt-dlp is installed
         check_ytdlp()
         
-        # Try format 22 (mp4) first
+        # Try best format first (most reliable)
         cmd = [
             'yt-dlp',
-            '-f', '22',
-            '-o', f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
+            '-f', 'best',
+            '-o', f'{output_folder}/%(title)s.%(ext)s',
             '--no-playlist',
+            '--restrict-filenames',
             video_url
         ]
         
         print(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        
-        # If format 22 fails, try best format
-        if result.returncode != 0:
-            print("Format 22 failed, trying best format...")
-            cmd = [
-                'yt-dlp',
-                '-f', 'best',
-                '-o', f'{DOWNLOAD_DIR}/%(title)s.%(ext)s',
-                '--no-playlist',
-                video_url
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
         
         # Check for downloaded files
-        downloaded_files = list(DOWNLOAD_DIR.glob('*.mp4'))
+        downloaded_files = list(Path(output_folder).glob('*.mp4'))
         
         if result.returncode == 0 and downloaded_files:
             # Find the most recently downloaded file
@@ -195,11 +199,39 @@ def download():
                 'size_mb': file_size
             })
         else:
-            return jsonify({
-                'success': False,
-                'error': result.stderr[:500] if result.stderr else 'Download failed'
-            })
+            # Try with different format if best fails
+            print("Best format failed, trying mp4 format...")
+            cmd2 = [
+                'yt-dlp',
+                '-f', 'mp4',
+                '-o', f'{output_folder}/%(title)s.%(ext)s',
+                '--no-playlist',
+                '--restrict-filenames',
+                video_url
+            ]
             
+            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
+            downloaded_files2 = list(Path(output_folder).glob('*.mp4'))
+            
+            if result2.returncode == 0 and downloaded_files2:
+                latest_file = max(downloaded_files2, key=lambda f: f.stat().st_mtime)
+                file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
+                
+                return jsonify({
+                    'success': True,
+                    'message': f'✅ Downloaded: {latest_file.name} ({file_size} MB)',
+                    'file': str(latest_file),
+                    'filename': latest_file.name,
+                    'size_mb': file_size
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': result.stderr[:500] if result.stderr else 'Download failed'
+                })
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({'success': False, 'error': 'Download timed out after 5 minutes'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
