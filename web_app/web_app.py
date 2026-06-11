@@ -22,6 +22,7 @@ UPLOADED_LOG = BASE_DIR / 'ytupload' / 'uploaded_videos.log'
 def index():
     return render_template('index.html')
 
+# web_app/web_app.py - Updated discover endpoint with better config
 @app.route('/api/discover', methods=['POST'])
 def discover():
     """Run YouTube discovery with given search terms"""
@@ -30,25 +31,36 @@ def discover():
         search_terms = data.get('search_terms', ['python programming'])
         max_results = data.get('max_results', 10)
         
-        # Create a temporary config file with the search terms
-        temp_config = DISCOVERY_DIR / 'temp_config.env'
-        config_content = f"""
-YOUTUBE_API_KEY={os.environ.get('YOUTUBE_API_KEY', '')}
-SEARCH_TERMS={','.join(search_terms)}
-MAX_RESULTS_PER_TERM={max_results}
-OUTPUT_DIR=youtube_discovery_results
-"""
-        with open(temp_config, 'w') as f:
-            f.write(config_content)
+        # Get API key from environment
+        api_key = os.environ.get('YOUTUBE_API_KEY', '')
+        
+        if not api_key:
+            return jsonify({'success': False, 'error': 'YOUTUBE_API_KEY environment variable not set'})
+        
+        # Create a .env file in the discovery directory
+        env_file = DISCOVERY_DIR / '.env'
+        with open(env_file, 'w') as f:
+            f.write(f"YOUTUBE_API_KEY={api_key}\n")
+            f.write(f"SEARCH_TERMS={','.join(search_terms)}\n")
+            f.write(f"MAX_RESULTS_PER_TERM={max_results}\n")
+            f.write(f"OUTPUT_DIR=youtube_discovery_results\n")
+        
+        # Also create a config.py override if needed
+        config_file = DISCOVERY_DIR / 'config.py'
+        with open(config_file, 'r') as f:
+            config_content = f.read()
+        
+        print(f"Running discovery with terms: {search_terms}")
+        print(f"API Key present: {bool(api_key)}")
         
         # Run the discovery script
-        print(f"Running discovery with terms: {search_terms}")
         result = subprocess.run(
             ['python', str(DISCOVERY_DIR / 'main.py')],
             cwd=str(DISCOVERY_DIR),
             capture_output=True,
             text=True,
-            timeout=300
+            timeout=300,
+            env={**os.environ, 'YOUTUBE_API_KEY': api_key}
         )
         
         print(f"Discovery stdout: {result.stdout}")
@@ -58,52 +70,21 @@ OUTPUT_DIR=youtube_discovery_results
         results_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'json'
         results_file = results_dir / 'analysis_report.json'
         
-        # Also try to find any JSON file
-        if not results_file.exists():
-            json_files = list(results_dir.glob('*.json'))
-            if json_files:
-                results_file = json_files[0]
-        
         if results_file.exists():
             with open(results_file, 'r', encoding='utf-8') as f:
                 report = json.load(f)
-            
-            # Also get the URLs file
-            urls_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'urls'
-            url_files = list(urls_dir.glob('video_urls_*.txt'))
-            urls_file = str(url_files[-1]) if url_files else ''
             
             return jsonify({
                 'success': True,
                 'videos': report.get('top_videos', []),
                 'stats': report.get('statistics', {}),
-                'results_file': urls_file,
                 'message': f"Found {len(report.get('top_videos', []))} videos"
             })
         else:
-            # Check if there's any output at all
-            output_dir = DISCOVERY_DIR / 'youtube_discovery_results'
-            if output_dir.exists():
-                all_files = list(output_dir.rglob('*'))
-                return jsonify({
-                    'success': False, 
-                    'error': 'No analysis_report.json found',
-                    'debug': {
-                        'output_dir_exists': True,
-                        'files_found': [str(f.relative_to(output_dir)) for f in all_files[:10]],
-                        'stdout': result.stdout[:500],
-                        'stderr': result.stderr[:500]
-                    }
-                })
-            else:
-                return jsonify({
-                    'success': False, 
-                    'error': 'Discovery ran but no output folder was created',
-                    'debug': {
-                        'stdout': result.stdout[:500],
-                        'stderr': result.stderr[:500]
-                    }
-                })
+            return jsonify({
+                'success': False, 
+                'error': f'No results found. Script output: {result.stdout[:500]}'
+            })
             
     except subprocess.TimeoutExpired:
         return jsonify({'success': False, 'error': 'Discovery timed out after 5 minutes'})
