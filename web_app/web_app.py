@@ -39,6 +39,16 @@ TEMP_DIR.mkdir(parents=True, exist_ok=True)
 DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID', None)
 
 
+
+
+
+
+
+
+
+
+
+
 def get_drive_service():
     """Authenticate and return Google Drive service"""
     creds = None
@@ -62,19 +72,43 @@ def get_drive_service():
         
         if not creds:
             # Look for client_secrets file
-            secrets_file = Path('/app/ytupload/client_secrets.json')
-            if not secrets_file.exists():
-                secrets_file = BASE_DIR / 'ytupload' / 'client_secrets.json'
+            secrets_paths = [
+                Path('/app/ytupload/client_secrets.json'),
+                Path('/opt/render/project/src/ytupload/client_secrets.json'),
+                BASE_DIR / 'ytupload' / 'client_secrets.json',
+                Path('client_secrets.json'),
+            ]
             
-            if secrets_file.exists():
+            secrets_file = None
+            for path in secrets_paths:
+                if path.exists():
+                    secrets_file = path
+                    print(f"✅ Found client_secrets at: {path}")
+                    break
+            
+            if secrets_file:
                 try:
-                    flow = InstalledAppFlow.from_client_secrets_file(
-                        str(secrets_file), DRIVE_SCOPES)
-                    creds = flow.run_local_server(port=8080)
+                    # Determine redirect URI based on environment
+                    if os.environ.get('RENDER'):
+                        # Use Render URL for OAuth callback
+                        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'https://youtube-automator03.onrender.com')
+                        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # Allow HTTP for local testing
+                        
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            str(secrets_file), DRIVE_SCOPES)
+                        # Use Render URL for callback
+                        flow.redirect_uri = f'{render_url}/oauth2callback'
+                        creds = flow.run_local_server(port=8080)
+                    else:
+                        # Local development
+                        flow = InstalledAppFlow.from_client_secrets_file(
+                            str(secrets_file), DRIVE_SCOPES)
+                        creds = flow.run_local_server(port=8080)
                     
                     # Save credentials
                     with open(token_file, 'wb') as token:
                         pickle.dump(creds, token)
+                    print(f"✅ Drive authentication successful")
                 except Exception as e:
                     print(f"❌ Drive auth error: {e}")
                     return None
@@ -83,6 +117,12 @@ def get_drive_service():
                 return None
     
     return build('drive', 'v3', credentials=creds)
+
+
+
+
+
+
 
 
 def upload_to_drive(file_path, folder_id=None):
@@ -556,6 +596,17 @@ def history():
                     })
     
     return jsonify({'success': True, 'history': history})
+
+
+
+@app.route('/oauth2callback')
+def oauth2callback():
+    """Handle OAuth callback from Google"""
+    # This endpoint is needed for the OAuth flow
+    return "Authentication complete! You can close this window and return to the app."
+
+
+
 
 
 @app.route('/api/health', methods=['GET'])
