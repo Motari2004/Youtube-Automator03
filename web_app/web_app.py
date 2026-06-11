@@ -1,7 +1,8 @@
-# web_app/web_app.py
+# web_app/web_app.py - Updated discover endpoint
 import os
 import json
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify
@@ -11,14 +12,14 @@ app = Flask(__name__)
 CORS(app)
 
 # Configuration
-DISCOVERY_DIR = Path(__file__).parent.parent / 'youtube_discovery'
-DOWNLOAD_SCRIPT = Path(__file__).parent.parent / 'ytdownload' / 'working_downloader_fixed.py'
-UPLOAD_SCRIPT = Path(__file__).parent.parent / 'ytupload' / 'yt_uploader_auto.py'
-UPLOADED_LOG = Path(__file__).parent.parent / 'ytupload' / 'uploaded_videos.log'
+BASE_DIR = Path(__file__).parent.parent
+DISCOVERY_DIR = BASE_DIR / 'youtube_discovery'
+DOWNLOAD_SCRIPT = BASE_DIR / 'ytdownload' / 'working_downloader_fixed.py'
+UPLOAD_SCRIPT = BASE_DIR / 'ytupload' / 'yt_uploader_auto.py'
+UPLOADED_LOG = BASE_DIR / 'ytupload' / 'uploaded_videos.log'
 
 @app.route('/')
 def index():
-    """Serve the main page"""
     return render_template('index.html')
 
 @app.route('/api/discover', methods=['POST'])
@@ -29,7 +30,19 @@ def discover():
         search_terms = data.get('search_terms', ['python programming'])
         max_results = data.get('max_results', 10)
         
+        # Create a temporary config file with the search terms
+        temp_config = DISCOVERY_DIR / 'temp_config.env'
+        config_content = f"""
+YOUTUBE_API_KEY={os.environ.get('YOUTUBE_API_KEY', '')}
+SEARCH_TERMS={','.join(search_terms)}
+MAX_RESULTS_PER_TERM={max_results}
+OUTPUT_DIR=youtube_discovery_results
+"""
+        with open(temp_config, 'w') as f:
+            f.write(config_content)
+        
         # Run the discovery script
+        print(f"Running discovery with terms: {search_terms}")
         result = subprocess.run(
             ['python', str(DISCOVERY_DIR / 'main.py')],
             cwd=str(DISCOVERY_DIR),
@@ -38,23 +51,62 @@ def discover():
             timeout=300
         )
         
-        # Read the results
-        results_file = DISCOVERY_DIR / 'youtube_discovery_results' / 'json' / 'analysis_report.json'
+        print(f"Discovery stdout: {result.stdout}")
+        print(f"Discovery stderr: {result.stderr}")
+        
+        # Look for the results file
+        results_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'json'
+        results_file = results_dir / 'analysis_report.json'
+        
+        # Also try to find any JSON file
+        if not results_file.exists():
+            json_files = list(results_dir.glob('*.json'))
+            if json_files:
+                results_file = json_files[0]
         
         if results_file.exists():
             with open(results_file, 'r', encoding='utf-8') as f:
                 report = json.load(f)
             
+            # Also get the URLs file
+            urls_dir = DISCOVERY_DIR / 'youtube_discovery_results' / 'urls'
+            url_files = list(urls_dir.glob('video_urls_*.txt'))
+            urls_file = str(url_files[-1]) if url_files else ''
+            
             return jsonify({
                 'success': True,
                 'videos': report.get('top_videos', []),
-                'stats': report.get('statistics', {})
+                'stats': report.get('statistics', {}),
+                'results_file': urls_file,
+                'message': f"Found {len(report.get('top_videos', []))} videos"
             })
         else:
-            return jsonify({'success': False, 'error': 'No results found'})
+            # Check if there's any output at all
+            output_dir = DISCOVERY_DIR / 'youtube_discovery_results'
+            if output_dir.exists():
+                all_files = list(output_dir.rglob('*'))
+                return jsonify({
+                    'success': False, 
+                    'error': 'No analysis_report.json found',
+                    'debug': {
+                        'output_dir_exists': True,
+                        'files_found': [str(f.relative_to(output_dir)) for f in all_files[:10]],
+                        'stdout': result.stdout[:500],
+                        'stderr': result.stderr[:500]
+                    }
+                })
+            else:
+                return jsonify({
+                    'success': False, 
+                    'error': 'Discovery ran but no output folder was created',
+                    'debug': {
+                        'stdout': result.stdout[:500],
+                        'stderr': result.stderr[:500]
+                    }
+                })
             
     except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Discovery timed out'})
+        return jsonify({'success': False, 'error': 'Discovery timed out after 5 minutes'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
 
@@ -66,10 +118,8 @@ def download():
         video_url = data.get('url')
         output_folder = data.get('output_folder', '/tmp/downloads')
         
-        # Create output folder
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         
-        # Run yt-dlp directly
         cmd = [
             'yt-dlp',
             '-f', 'best',
@@ -97,7 +147,6 @@ def upload():
         title = data.get('title', '')
         privacy = data.get('privacy_status', 'public')
         
-        # Run upload script
         cmd = [
             'python', str(UPLOAD_SCRIPT),
             '--video', video_path,
