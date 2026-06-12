@@ -234,10 +234,9 @@ def discover():
 
 
 
-
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download video using yt-dlp with cookies"""
+    """Download video using yt-dlp with cookies from secrets"""
     try:
         data = request.get_json()
         video_url = data.get('url')
@@ -248,36 +247,34 @@ def download():
         output_folder = '/opt/render/project/src/downloads'
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         
-        # Path to cookies file
-        cookies_path = '/app/cookies.txt'
+        # Secret file location on Render
+        cookies_path = '/etc/secrets/cookies.txt'
         
         # Check if cookies exist
-        if not os.path.exists(cookies_path):
-            print("⚠️ No cookies file found, trying without authentication...")
-            cookies_arg = []
-        else:
+        if os.path.exists(cookies_path):
+            print(f"✅ Using cookies from {cookies_path}")
             cookies_arg = ['--cookies', cookies_path]
-            print("✅ Using cookies for authentication")
+        else:
+            print("⚠️ No cookies file found")
+            cookies_arg = []
         
-        # Update yt-dlp to latest nightly (fixes many issues)
+        # Update yt-dlp
         subprocess.run([sys.executable, '-m', 'pip', 'install', '--upgrade', 'yt-dlp'], 
                       capture_output=True)
         
-        # Command with cookies and impersonation
+        # Download command with cookies
         cmd = [
             'yt-dlp',
             '-f', 'best[ext=mp4]/best',
             '-o', f'{output_folder}/%(title)s.%(ext)s',
             '--no-playlist',
             '--restrict-filenames',
-            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             '--extractor-args', 'youtube:player_client=android',
             '--sleep-requests', '5',
-            '--sleep-interval', '10',
             '--retries', '10',
         ] + cookies_arg + [video_url]
         
-        print(f"Running download with cookies: {bool(cookies_arg)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         # Check for downloaded files
@@ -287,7 +284,7 @@ def download():
             latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
             file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
             
-            # Upload to Drive
+            # Upload to Google Drive
             drive_file = upload_to_drive(str(latest_file))
             latest_file.unlink()
             
