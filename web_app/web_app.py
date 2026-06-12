@@ -40,15 +40,6 @@ DRIVE_FOLDER_ID = os.environ.get('DRIVE_FOLDER_ID', None)
 
 
 
-
-
-
-
-
-
-
-
-
 def get_drive_service():
     """Authenticate and return Google Drive service"""
     creds = None
@@ -72,43 +63,19 @@ def get_drive_service():
         
         if not creds:
             # Look for client_secrets file
-            secrets_paths = [
-                Path('/app/ytupload/client_secrets.json'),
-                Path('/opt/render/project/src/ytupload/client_secrets.json'),
-                BASE_DIR / 'ytupload' / 'client_secrets.json',
-                Path('client_secrets.json'),
-            ]
+            secrets_file = Path('/app/ytupload/client_secrets.json')
+            if not secrets_file.exists():
+                secrets_file = BASE_DIR / 'ytupload' / 'client_secrets.json'
             
-            secrets_file = None
-            for path in secrets_paths:
-                if path.exists():
-                    secrets_file = path
-                    print(f"✅ Found client_secrets at: {path}")
-                    break
-            
-            if secrets_file:
+            if secrets_file.exists():
                 try:
-                    # Determine redirect URI based on environment
-                    if os.environ.get('RENDER'):
-                        # Use Render URL for OAuth callback
-                        render_url = os.environ.get('RENDER_EXTERNAL_URL', 'https://youtube-automator03.onrender.com')
-                        os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'  # Allow HTTP for local testing
-                        
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            str(secrets_file), DRIVE_SCOPES)
-                        # Use Render URL for callback
-                        flow.redirect_uri = f'{render_url}/oauth2callback'
-                        creds = flow.run_local_server(port=8080)
-                    else:
-                        # Local development
-                        flow = InstalledAppFlow.from_client_secrets_file(
-                            str(secrets_file), DRIVE_SCOPES)
-                        creds = flow.run_local_server(port=8080)
+                    flow = InstalledAppFlow.from_client_secrets_file(
+                        str(secrets_file), DRIVE_SCOPES)
+                    creds = flow.run_local_server(port=8080)
                     
                     # Save credentials
                     with open(token_file, 'wb') as token:
                         pickle.dump(creds, token)
-                    print(f"✅ Drive authentication successful")
                 except Exception as e:
                     print(f"❌ Drive auth error: {e}")
                     return None
@@ -117,12 +84,6 @@ def get_drive_service():
                 return None
     
     return build('drive', 'v3', credentials=creds)
-
-
-
-
-
-
 
 
 def upload_to_drive(file_path, folder_id=None):
@@ -268,9 +229,17 @@ def discover():
         return jsonify({'success': False, 'error': str(e)})
 
 
+
+
+
+
+
+
+
+
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download video and upload to Google Drive"""
+    """Download video using yt-dlp with proper error handling"""
     try:
         data = request.get_json()
         video_url = data.get('url')
@@ -278,70 +247,109 @@ def download():
         if not video_url:
             return jsonify({'success': False, 'error': 'No URL provided'})
         
+        # Use persistent storage
+        output_folder = '/opt/render/project/src/downloads'
+        Path(output_folder).mkdir(parents=True, exist_ok=True)
+        
         print(f"📥 Downloading: {video_url}")
-        print(f"📁 Temp folder: {TEMP_DIR}")
-        print(f"💾 Disk space: {check_disk_space(TEMP_DIR)}")
+        print(f"📁 Output folder: {output_folder}")
         
-        # Ensure yt-dlp is installed
-        check_ytdlp()
+        # Update yt-dlp first
+        subprocess.run([sys.executable, '-m', 'pip', 'install', '--upgrade', 'yt-dlp'], 
+                      capture_output=True)
         
-        # Download video to temp folder
+        # Add a delay to avoid rate limiting
+        import time
+        time.sleep(2)
+        
+        # More robust command with browser impersonation
         cmd = [
             'yt-dlp',
             '-f', 'best[ext=mp4]/best',
-            '-o', f'{TEMP_DIR}/%(title)s.%(ext)s',
+            '-o', f'{output_folder}/%(title)s.%(ext)s',
             '--no-playlist',
             '--restrict-filenames',
+            '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            '--extractor-args', 'youtube:player_client=android',
+            '--sleep-requests', '3',
+            '--sleep-interval', '5',
+            '--retries', '5',
             video_url
         ]
         
-        print(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
         
         print(f"Return code: {result.returncode}")
+        if result.stderr:
+            print(f"STDERR: {result.stderr[:300]}")
         
-        # Find downloaded file
-        downloaded_files = list(TEMP_DIR.glob('*.mp4'))
+        # Check for downloaded files
+        downloaded_files = list(Path(output_folder).glob('*.mp4'))
         
         if result.returncode == 0 and downloaded_files:
             latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
             file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
-            
             print(f"✅ Downloaded: {latest_file.name} ({file_size} MB)")
-            print(f"📤 Uploading to Google Drive...")
             
             # Upload to Google Drive
             drive_file = upload_to_drive(str(latest_file))
-            
-            # Clean up temp file
-            latest_file.unlink()
+            latest_file.unlink()  # Clean up
             
             if drive_file:
                 return jsonify({
                     'success': True,
-                    'message': f'✅ Uploaded to Drive: {drive_file.get("webViewLink")}',
+                    'message': f'✅ Uploaded to Drive',
                     'drive_link': drive_file.get('webViewLink'),
-                    'file_id': drive_file.get('id'),
                     'filename': drive_file.get('name'),
                     'size_mb': file_size
                 })
-            else:
-                return jsonify({
-                    'success': False,
-                    'error': 'Downloaded but failed to upload to Drive. Check Drive authentication.'
-                })
-        else:
-            error_msg = result.stderr[:500] if result.stderr else 'Download failed - no file created'
-            print(f"❌ Download failed: {error_msg}")
-            return jsonify({
-                'success': False,
-                'error': error_msg
-            })
+        
+        # If we got a 429 error, try with lower quality
+        if result.stderr and '429' in result.stderr:
+            print("⚠️ Rate limited, trying lower quality...")
+            time.sleep(30)
             
-    except subprocess.TimeoutExpired:
-        return jsonify({'success': False, 'error': 'Download timed out after 5 minutes'})
+            cmd2 = [
+                'yt-dlp',
+                '-f', '18',  # 360p MP4 - more reliable
+                '-o', f'{output_folder}/%(title)s.%(ext)s',
+                '--no-playlist',
+                '--restrict-filenames',
+                video_url
+            ]
+            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
+            
+            downloaded_files = list(Path(output_folder).glob('*.mp4'))
+            if result2.returncode == 0 and downloaded_files:
+                latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
+                file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
+                drive_file = upload_to_drive(str(latest_file))
+                latest_file.unlink()
+                
+                if drive_file:
+                    return jsonify({
+                        'success': True,
+                        'message': '✅ Downloaded (lower quality)',
+                        'drive_link': drive_file.get('webViewLink')
+                    })
+        
+        return jsonify({
+            'success': False,
+            'error': result.stderr[:500] if result.stderr else 'Download failed'
+        })
+            
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)})
+
+
+
+
+
+
+
+
+
+
 
 
 @app.route('/api/download-all', methods=['POST'])
@@ -596,17 +604,6 @@ def history():
                     })
     
     return jsonify({'success': True, 'history': history})
-
-
-
-@app.route('/oauth2callback')
-def oauth2callback():
-    """Handle OAuth callback from Google"""
-    # This endpoint is needed for the OAuth flow
-    return "Authentication complete! You can close this window and return to the app."
-
-
-
 
 
 @app.route('/api/health', methods=['GET'])

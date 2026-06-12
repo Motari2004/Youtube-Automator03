@@ -1,1 +1,4 @@
 client_secrets.json 
+youtube_discovery/.env
+youtube_discovery_results/
+__pycache__/
