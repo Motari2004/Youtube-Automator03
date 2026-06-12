@@ -235,11 +235,9 @@ def discover():
 
 
 
-
-
 @app.route('/api/download', methods=['POST'])
 def download():
-    """Download video using yt-dlp with proper error handling"""
+    """Download video using yt-dlp with cookies"""
     try:
         data = request.get_json()
         video_url = data.get('url')
@@ -247,22 +245,25 @@ def download():
         if not video_url:
             return jsonify({'success': False, 'error': 'No URL provided'})
         
-        # Use persistent storage
         output_folder = '/opt/render/project/src/downloads'
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         
-        print(f"📥 Downloading: {video_url}")
-        print(f"📁 Output folder: {output_folder}")
+        # Path to cookies file
+        cookies_path = '/app/cookies.txt'
         
-        # Update yt-dlp first
+        # Check if cookies exist
+        if not os.path.exists(cookies_path):
+            print("⚠️ No cookies file found, trying without authentication...")
+            cookies_arg = []
+        else:
+            cookies_arg = ['--cookies', cookies_path]
+            print("✅ Using cookies for authentication")
+        
+        # Update yt-dlp to latest nightly (fixes many issues)
         subprocess.run([sys.executable, '-m', 'pip', 'install', '--upgrade', 'yt-dlp'], 
                       capture_output=True)
         
-        # Add a delay to avoid rate limiting
-        import time
-        time.sleep(2)
-        
-        # More robust command with browser impersonation
+        # Command with cookies and impersonation
         cmd = [
             'yt-dlp',
             '-f', 'best[ext=mp4]/best',
@@ -271,17 +272,13 @@ def download():
             '--restrict-filenames',
             '--user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             '--extractor-args', 'youtube:player_client=android',
-            '--sleep-requests', '3',
-            '--sleep-interval', '5',
-            '--retries', '5',
-            video_url
-        ]
+            '--sleep-requests', '5',
+            '--sleep-interval', '10',
+            '--retries', '10',
+        ] + cookies_arg + [video_url]
         
+        print(f"Running download with cookies: {bool(cookies_arg)}")
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
-        
-        print(f"Return code: {result.returncode}")
-        if result.stderr:
-            print(f"STDERR: {result.stderr[:300]}")
         
         # Check for downloaded files
         downloaded_files = list(Path(output_folder).glob('*.mp4'))
@@ -289,49 +286,19 @@ def download():
         if result.returncode == 0 and downloaded_files:
             latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
             file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
-            print(f"✅ Downloaded: {latest_file.name} ({file_size} MB)")
             
-            # Upload to Google Drive
+            # Upload to Drive
             drive_file = upload_to_drive(str(latest_file))
-            latest_file.unlink()  # Clean up
+            latest_file.unlink()
             
             if drive_file:
                 return jsonify({
                     'success': True,
-                    'message': f'✅ Uploaded to Drive',
+                    'message': '✅ Downloaded and uploaded to Drive',
                     'drive_link': drive_file.get('webViewLink'),
                     'filename': drive_file.get('name'),
                     'size_mb': file_size
                 })
-        
-        # If we got a 429 error, try with lower quality
-        if result.stderr and '429' in result.stderr:
-            print("⚠️ Rate limited, trying lower quality...")
-            time.sleep(30)
-            
-            cmd2 = [
-                'yt-dlp',
-                '-f', '18',  # 360p MP4 - more reliable
-                '-o', f'{output_folder}/%(title)s.%(ext)s',
-                '--no-playlist',
-                '--restrict-filenames',
-                video_url
-            ]
-            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=300)
-            
-            downloaded_files = list(Path(output_folder).glob('*.mp4'))
-            if result2.returncode == 0 and downloaded_files:
-                latest_file = max(downloaded_files, key=lambda f: f.stat().st_mtime)
-                file_size = round(latest_file.stat().st_size / (1024 * 1024), 2)
-                drive_file = upload_to_drive(str(latest_file))
-                latest_file.unlink()
-                
-                if drive_file:
-                    return jsonify({
-                        'success': True,
-                        'message': '✅ Downloaded (lower quality)',
-                        'drive_link': drive_file.get('webViewLink')
-                    })
         
         return jsonify({
             'success': False,
